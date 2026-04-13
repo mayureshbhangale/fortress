@@ -1,0 +1,2 @@
+# Runtime dependencies — keep this minimal.
+# Add your project's actual dependencies here.

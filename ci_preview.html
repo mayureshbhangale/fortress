@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Fortress CI — Step Summary Preview</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0d1117;
+    color: #e6edf3;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 14px;
+    padding: 24px;
+  }
+  h1 { font-size: 20px; color: #f0f6fc; margin-bottom: 4px; }
+  .subtitle { color: #8b949e; font-size: 13px; margin-bottom: 24px; }
+
+  .tabs { display: flex; gap: 8px; margin-bottom: 24px; flex-wrap: wrap; }
+  .tab {
+    padding: 6px 14px; border-radius: 6px; cursor: pointer;
+    font-size: 13px; font-weight: 500; border: 1px solid #30363d;
+    background: #161b22; color: #8b949e; transition: all .15s;
+  }
+  .tab.active { background: #21262d; color: #f0f6fc; border-color: #58a6ff; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  .dot.fail { background: #f85149; }
+  .dot.pass { background: #3fb950; }
+
+  .job-panel { display: none; }
+  .job-panel.active { display: block; }
+
+  h2 { font-size: 16px; color: #f0f6fc; margin: 24px 0 10px;
+       padding-bottom: 6px; border-bottom: 1px solid #21262d; }
+
+  .alert {
+    border-radius: 6px; padding: 12px 16px; margin: 10px 0;
+    border-left: 3px solid; font-size: 13px; line-height: 1.6;
+  }
+  .alert.success { background: #0d2b1a; border-color: #3fb950; color: #aff5b4; }
+  .alert.error   { background: #2d0f10; border-color: #f85149; color: #ffa198; }
+  .alert.warn    { background: #2b1d0e; border-color: #d29922; color: #e3b341; }
+
+  table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 13px; }
+  thead tr { background: #161b22; }
+  th { padding: 8px 12px; text-align: left; color: #8b949e; font-weight: 600; border-bottom: 1px solid #30363d; }
+  td { padding: 8px 12px; border-bottom: 1px solid #21262d; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #161b22; }
+  code {
+    background: #1c2128; padding: 1px 5px; border-radius: 4px;
+    font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; color: #79c0ff;
+  }
+
+  .diff {
+    background: #161b22; border: 1px solid #30363d; border-radius: 6px;
+    padding: 12px; font-family: monospace; font-size: 12px;
+    margin: 10px 0; line-height: 1.7;
+  }
+  .diff .add { color: #3fb950; }
+  .diff .rem { color: #f85149; }
+  .diff .hdr { color: #79c0ff; }
+
+  details {
+    background: #161b22; border: 1px solid #30363d;
+    border-radius: 6px; margin: 10px 0;
+  }
+  summary { padding: 10px 14px; cursor: pointer; font-weight: 500; color: #f85149; font-size: 13px; }
+  summary:hover { background: #1c2128; }
+  .inner { padding: 0 14px 14px; }
+  pre {
+    background: #0d1117; border-radius: 4px; padding: 12px;
+    font-size: 12px; color: #8b949e; line-height: 1.6; margin-top: 8px;
+    overflow-x: auto;
+  }
+  .fail-line { color: #f85149; }
+  .pass-cell { color: #3fb950; font-weight: 600; }
+  .fail-cell { color: #f85149; font-weight: 600; }
+
+  hr { border: none; border-top: 1px solid #21262d; margin: 20px 0; }
+  .tip {
+    background: #1c2128; border: 1px solid #30363d; border-radius: 6px;
+    padding: 10px 14px; font-size: 12px; color: #8b949e; margin-top: 10px;
+  }
+  .tip strong { color: #58a6ff; }
+  .muted { color: #8b949e; font-size: 12px; margin-top: 6px; }
+</style>
+</head>
+<body>
+
+<h1>🏰 Fortress CI — GitHub Step Summary (Preview)</h1>
+<p class="subtitle">Click each job tab to see what developers see when a PR runs CI.</p>
+
+<div class="tabs">
+  <div class="tab active" onclick="show('quality', this)">
+    <span class="dot fail"></span>🔍 Code Quality
+  </div>
+  <div class="tab" onclick="show('tests', this)">
+    <span class="dot fail"></span>🧪 Tests + Coverage
+  </div>
+  <div class="tab" onclick="show('security', this)">
+    <span class="dot fail"></span>🛡️ Security Scan
+  </div>
+</div>
+
+<!-- ── JOB 1: CODE QUALITY ──────────────────────────────────────────────── -->
+<div id="quality" class="job-panel active">
+
+  <h2>✏️ Black Formatting Check</h2>
+  <div class="alert error">
+    ❌ <strong>Formatting issues found.</strong> Run <code>black src/</code> to fix automatically.
+  </div>
+  <div class="diff">
+    <span class="hdr">--- src/utils.py</span><br>
+    <span class="hdr">+++ src/utils.py (reformatted)</span><br>
+    <span class="hdr">@@ -12,5 +12,4 @@</span><br>
+    <span class="rem">-def process_data(items,threshold,</span><br>
+    <span class="rem">-    multiplier):</span><br>
+    <span class="add">+def process_data(items, threshold, multiplier):</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;results = []<br>
+    <span class="rem">-    for i in items :</span><br>
+    <span class="add">+    for i in items:</span><br>
+  </div>
+
+  <h2>📦 isort Import Sorting Check</h2>
+  <div class="alert success">✅ All imports are correctly sorted.</div>
+
+  <h2>🔎 Ruff Linting Check</h2>
+  <div class="alert error">
+    ❌ <strong>4 linting issue(s) found.</strong> Run <code>ruff check --fix src/</code> to auto-fix what's possible.
+  </div>
+  <table>
+    <thead><tr><th>File</th><th>Line</th><th>Code</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>utils.py</code></td><td>23</td><td><code>F401</code></td><td><code>os</code> imported but unused</td></tr>
+      <tr><td><code>utils.py</code></td><td>47</td><td><code>B006</code></td><td>Do not use mutable data structures for argument defaults</td></tr>
+      <tr><td><code>models/user.py</code></td><td>12</td><td><code>N802</code></td><td>Function name <code>getUserById</code> should be lowercase</td></tr>
+      <tr><td><code>models/user.py</code></td><td>31</td><td><code>UP006</code></td><td>Use <code>list</code> instead of <code>List</code> for type annotation</td></tr>
+    </tbody>
+  </table>
+
+  <h2>🔬 MyPy Type Checking</h2>
+  <div class="alert error">
+    ❌ <strong>2 type error(s) found.</strong> Add type hints to resolve these.
+  </div>
+  <table>
+    <thead><tr><th>File</th><th>Line</th><th>Error</th></tr></thead>
+    <tbody>
+      <tr><td><code>utils.py</code></td><td>58</td><td>Argument 1 to "process_data" has incompatible type "str"; expected "list[Any]"</td></tr>
+      <tr><td><code>models/user.py</code></td><td>44</td><td>Returning Any from function declared to return "str"</td></tr>
+    </tbody>
+  </table>
+
+  <h2>🔀 Cyclomatic Complexity (threshold: 10)</h2>
+  <div class="alert error">
+    ❌ <strong>1 overly complex function found.</strong><br><br>
+    Complexity &gt; 10 means too many <code>if</code>/<code>else</code>/<code>for</code>/<code>while</code> branches.<br>
+    <strong>How to fix:</strong> Break this function into smaller, single-purpose functions.
+  </div>
+  <table>
+    <thead><tr><th>File</th><th>Function</th><th>Line</th><th>Complexity</th><th>Grade</th></tr></thead>
+    <tbody>
+      <tr><td><code>utils.py</code></td><td><code>process_data</code></td><td>47</td><td>14</td><td>C</td></tr>
+    </tbody>
+  </table>
+
+  <h2>📏 Function Length Check (max: 50 lines)</h2>
+  <div class="alert success">✅ All functions are within the length limit.</div>
+
+  <hr>
+  <h2>📋 Quality Gate — Final Results</h2>
+  <table>
+    <thead><tr><th>Check</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td>✏️ Black formatting</td>      <td class="fail-cell">❌ Failed</td></tr>
+      <tr><td>📦 isort import sorting</td>  <td class="pass-cell">✅ Passed</td></tr>
+      <tr><td>🔎 Ruff linting</td>          <td class="fail-cell">❌ Failed</td></tr>
+      <tr><td>🔬 MyPy type checking</td>    <td class="fail-cell">❌ Failed</td></tr>
+      <tr><td>🔀 Cyclomatic complexity</td> <td class="fail-cell">❌ Failed</td></tr>
+      <tr><td>📏 Function length</td>       <td class="pass-cell">✅ Passed</td></tr>
+    </tbody>
+  </table>
+  <div class="alert error">❌ <strong>4 check(s) failed.</strong> Fix the issues above, then push again.</div>
+  <div class="tip">💡 <strong>Tip:</strong> Run <code>make check</code> locally to see every failure before pushing.</div>
+</div>
+
+<!-- ── JOB 2: TESTS ─────────────────────────────────────────────────────── -->
+<div id="tests" class="job-panel">
+
+  <h2>🧪 Test Results</h2>
+  <div class="alert warn"><strong>Result:</strong> <code>18 passed, 2 failed in 1.43s</code></div>
+
+  <details>
+    <summary>❌ Failures (click to expand)</summary>
+    <div class="inner">
+      <pre><span class="fail-line">FAILED tests/test_utils.py::TestProcessData::test_empty_input</span>
+<span class="fail-line">FAILED tests/test_models.py::TestUser::test_get_by_id_returns_string</span>
+
+========================= FAILURES =========================
+_______ TestProcessData.test_empty_input _______
+
+    def test_empty_input():
+>       result = process_data([], threshold=5, multiplier=2)
+        assert result == []
+
+<span class="fail-line">E   TypeError: process_data() missing 1 required argument: 'multiplier'</span>
+
+tests/test_utils.py:34: TypeError</pre>
+    </div>
+  </details>
+
+  <h2>📊 Coverage Report (threshold: 80%)</h2>
+  <div class="alert error"><strong>Overall coverage: 76.3%</strong> ❌ Below threshold</div>
+  <table>
+    <thead><tr><th></th><th>File</th><th>Coverage</th><th>Missing Lines</th></tr></thead>
+    <tbody>
+      <tr><td>✅</td><td><code>example.py</code></td><td>100%</td><td>—</td></tr>
+      <tr><td>✅</td><td><code>models/user.py</code></td><td>88%</td><td>44, 45</td></tr>
+      <tr><td>⚠️</td><td><code>utils.py</code></td><td>61%</td><td>47–58, 72, 89–94</td></tr>
+      <tr><td>⚠️</td><td><code>services/auth.py</code></td><td>55%</td><td>12–30, 45, 67–80</td></tr>
+    </tbody>
+  </table>
+  <div class="alert error">❌ Coverage 76.3% is below the 80% threshold.</div>
+</div>
+
+<!-- ── JOB 3: SECURITY ──────────────────────────────────────────────────── -->
+<div id="security" class="job-panel">
+
+  <h2>🔑 Secret Detection</h2>
+  <div class="alert error">
+    ❌ <strong>1 potential secret found in source code.</strong><br><br>
+    Never commit passwords, API keys, or tokens.<br>
+    <strong>How to fix:</strong> Move to environment variables. Use <code>python-dotenv</code> or your cloud's secret manager.
+  </div>
+  <table>
+    <thead><tr><th>File</th><th>Line</th><th>Secret Type</th></tr></thead>
+    <tbody>
+      <tr><td><code>services/auth.py</code></td><td>14</td><td>Secret Keyword</td></tr>
+    </tbody>
+  </table>
+
+  <h2>🔐 Bandit Code Security Scan</h2>
+  <div class="alert success">✅ No high/medium severity security issues found.</div>
+  <p class="muted">Low-severity findings (informational):</p>
+  <table>
+    <thead><tr><th>Severity</th><th>File</th><th>Line</th><th>Issue</th></tr></thead>
+    <tbody>
+      <tr><td>🟢 LOW</td><td><code>utils.py</code></td><td>89</td><td>Use of <code>assert</code> detected — remove in production code</td></tr>
+    </tbody>
+  </table>
+
+  <h2>📦 Dependency Vulnerability Scan (pip-audit)</h2>
+  <div class="alert success">✅ No known vulnerabilities in dependencies.</div>
+
+  <hr>
+  <h2>🛡️ Security Gate — Final Results</h2>
+  <table>
+    <thead><tr><th>Scan</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td>🔑 Hardcoded secrets</td>          <td class="fail-cell">❌ Failed</td></tr>
+      <tr><td>🔐 Bandit code security</td>        <td class="pass-cell">✅ Passed</td></tr>
+      <tr><td>📦 Dependency vulnerabilities</td>  <td class="pass-cell">✅ Passed</td></tr>
+    </tbody>
+  </table>
+  <div class="alert error">❌ <strong>1 scan failed.</strong> Resolve this before merging.</div>
+</div>
+
+<script>
+  function show(id, el) {
+    document.querySelectorAll('.job-panel').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+    el.classList.add('active');
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,553 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+env:
+  PYTHON_VERSION: "3.12"
+  MIN_COVERAGE: 80
+  MAX_COMPLEXITY: 10
+  MAX_FUNCTION_LENGTH: 50
+  SOURCE_DIR: "src"
+  TESTS_DIR: "tests"
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # JOB 1: Code Quality — ALL checks run even if one fails
+  # ─────────────────────────────────────────────────────────────────────────────
+  code-quality:
+    name: 🔍 Code Quality
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      # ── 1. Black formatting ──────────────────────────────────────────────────
+      - name: "Check 1/6 — Black formatting"
+        id: black
+        continue-on-error: true
+        run: |
+          echo "## ✏️ Black Formatting Check" >> $GITHUB_STEP_SUMMARY
+          if black --check --diff $SOURCE_DIR/ 2>&1 | tee /tmp/black_output.txt; then
+            echo "✅ All files are correctly formatted." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Formatting issues found.** Run \`black $SOURCE_DIR/\` to fix automatically." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo '```diff' >> $GITHUB_STEP_SUMMARY
+            cat /tmp/black_output.txt >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
+      # ── 2. isort import sorting ──────────────────────────────────────────────
+      - name: "Check 2/6 — isort import sorting"
+        id: isort
+        continue-on-error: true
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 📦 isort Import Sorting Check" >> $GITHUB_STEP_SUMMARY
+          if isort --check-only --diff $SOURCE_DIR/ 2>&1 | tee /tmp/isort_output.txt; then
+            echo "✅ All imports are correctly sorted." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Import ordering issues found.** Run \`isort $SOURCE_DIR/\` to fix automatically." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo '```diff' >> $GITHUB_STEP_SUMMARY
+            cat /tmp/isort_output.txt >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
+      # ── 3. Ruff linting ──────────────────────────────────────────────────────
+      - name: "Check 3/6 — Ruff linting"
+        id: ruff
+        continue-on-error: true
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 🔎 Ruff Linting Check" >> $GITHUB_STEP_SUMMARY
+          ruff check $SOURCE_DIR/ --output-format=json 2>/dev/null > /tmp/ruff_output.json || true
+          python3 - <<'PYEOF'
+          import json
+          try:
+              issues = json.load(open("/tmp/ruff_output.json"))
+          except Exception:
+              issues = []
+          limit = 30
+          with open("/tmp/ruff_summary.md", "w") as fh:
+              if not issues:
+                  fh.write("✅ No linting issues found.\n")
+                  open("/tmp/ruff_status","w").write("ok")
+              else:
+                  open("/tmp/ruff_status","w").write("fail")
+                  fh.write(f"❌ **{len(issues)} linting issue(s) found.** Run `ruff check --fix src/` to auto-fix what's possible.\n\n")
+                  fh.write("| File | Line | Code | Description |\n")
+                  fh.write("|------|------|------|-------------|\n")
+                  for issue in issues[:limit]:
+                      f = issue.get("filename","?").replace("src/","")
+                      line = issue.get("location",{}).get("row","?")
+                      code = issue.get("code","?")
+                      msg = issue.get("message","?")
+                      fh.write(f"| `{f}` | {line} | `{code}` | {msg} |\n")
+                  if len(issues) > limit:
+                      fh.write(f"\n_... and {len(issues)-limit} more issues._\n")
+          PYEOF
+          cat /tmp/ruff_summary.md >> $GITHUB_STEP_SUMMARY
+          [ "$(cat /tmp/ruff_status)" = "ok" ] || exit 1
+
+      # ── 4. MyPy type checking ────────────────────────────────────────────────
+      - name: "Check 4/6 — MyPy type checking"
+        id: mypy
+        continue-on-error: true
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 🔬 MyPy Type Checking" >> $GITHUB_STEP_SUMMARY
+          mypy $SOURCE_DIR/ --ignore-missing-imports 2>&1 | tee /tmp/mypy_output.txt || true
+          python3 - <<'PYEOF'
+          import re
+          lines = open("/tmp/mypy_output.txt").readlines()
+          errors = [l.strip() for l in lines if ": error:" in l]
+          with open("/tmp/mypy_summary.md","w") as fh:
+              if not errors:
+                  fh.write("✅ No type errors found.\n")
+                  open("/tmp/mypy_status","w").write("ok")
+              else:
+                  open("/tmp/mypy_status","w").write("fail")
+                  fh.write(f"❌ **{len(errors)} type error(s) found.** Add type hints to resolve these.\n\n")
+                  fh.write("| File | Line | Error |\n|------|------|-------|\n")
+                  for e in errors[:20]:
+                      parts = e.split(":")
+                      if len(parts) >= 3:
+                          fp = parts[0].replace("src/","")
+                          ln = parts[1].strip()
+                          msg = ":".join(parts[2:]).replace(" error:","").strip()
+                          fh.write(f"| `{fp}` | {ln} | {msg} |\n")
+          PYEOF
+          cat /tmp/mypy_summary.md >> $GITHUB_STEP_SUMMARY
+          [ "$(cat /tmp/mypy_status)" = "ok" ] || exit 1
+
+      # ── 5. Cyclomatic complexity (Radon) ────────────────────────────────────
+      - name: "Check 5/6 — Cyclomatic complexity (Radon)"
+        id: radon
+        continue-on-error: true
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 🔀 Cyclomatic Complexity (threshold: $MAX_COMPLEXITY)" >> $GITHUB_STEP_SUMMARY
+          radon cc $SOURCE_DIR/ -s -n C --json > /tmp/radon_output.json 2>/dev/null || echo "{}" > /tmp/radon_output.json
+          MAX_C=$MAX_COMPLEXITY python3 - <<'PYEOF'
+          import json, os
+          data = json.load(open("/tmp/radon_output.json"))
+          max_c = int(os.environ.get("MAX_C", 10))
+          violations = []
+          for filepath, blocks in data.items():
+              for block in blocks:
+                  c = block.get("complexity", 0)
+                  if c > max_c:
+                      violations.append({
+                          "file": filepath.replace("src/",""),
+                          "name": block.get("name","?"),
+                          "line": block.get("lineno","?"),
+                          "complexity": c,
+                          "grade": block.get("rank","?"),
+                      })
+          with open("/tmp/radon_summary.md","w") as fh:
+              if not violations:
+                  fh.write("✅ All functions have acceptable complexity.\n")
+                  open("/tmp/radon_status","w").write("ok")
+              else:
+                  open("/tmp/radon_status","w").write("fail")
+                  fh.write(f"❌ **{len(violations)} overly complex function(s) found.**\n\n")
+                  fh.write(f"> Complexity > {max_c} means too many `if`/`else`/`for`/`while` branches.\n")
+                  fh.write("> **How to fix:** Break this function into smaller, single-purpose functions.\n\n")
+                  fh.write("| File | Function | Line | Complexity | Grade |\n")
+                  fh.write("|------|----------|------|------------|-------|\n")
+                  for v in violations:
+                      fh.write(f"| `{v['file']}` | `{v['name']}` | {v['line']} | {v['complexity']} | {v['grade']} |\n")
+          PYEOF
+          cat /tmp/radon_summary.md >> $GITHUB_STEP_SUMMARY
+          [ "$(cat /tmp/radon_status)" = "ok" ] || exit 1
+
+      # ── 6. Function length (custom AST script) ───────────────────────────────
+      - name: "Check 6/6 — Function length"
+        id: funclength
+        continue-on-error: true
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 📏 Function Length Check (max: $MAX_FUNCTION_LENGTH lines)" >> $GITHUB_STEP_SUMMARY
+          MAX_F=$MAX_FUNCTION_LENGTH SOURCE=$SOURCE_DIR python3 - <<'PYEOF'
+          import ast, os
+          from pathlib import Path
+          max_lines = int(os.environ.get("MAX_F", 50))
+          source_dir = os.environ.get("SOURCE", "src")
+          violations = []
+          for py_file in Path(source_dir).rglob("*.py"):
+              try:
+                  tree = ast.parse(py_file.read_text())
+              except SyntaxError:
+                  continue
+              for node in ast.walk(tree):
+                  if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                      end = max(
+                          (getattr(n, "end_lineno", node.lineno) for n in ast.walk(node)),
+                          default=node.lineno,
+                      )
+                      length = end - node.lineno + 1
+                      if length > max_lines:
+                          violations.append({
+                              "file": str(py_file),
+                              "line": node.lineno,
+                              "name": node.name,
+                              "length": length,
+                              "over_by": length - max_lines,
+                          })
+          with open("/tmp/funclength_summary.md","w") as fh:
+              if not violations:
+                  fh.write("✅ All functions are within the length limit.\n")
+                  open("/tmp/funclength_status","w").write("ok")
+              else:
+                  open("/tmp/funclength_status","w").write("fail")
+                  fh.write(f"❌ **{len(violations)} function(s) exceeding {max_lines} lines found.**\n\n")
+                  fh.write("> Long functions are hard to test and understand.\n")
+                  fh.write("> **How to fix:** Extract logic into smaller, well-named helper functions.\n\n")
+                  fh.write("| File | Line | Function | Length | Over By |\n")
+                  fh.write("|------|------|----------|--------|---------|\n")
+                  for v in violations:
+                      fh.write(f"| `{v['file']}` | {v['line']} | `{v['name']}` | {v['length']} | +{v['over_by']} |\n")
+          PYEOF
+          cat /tmp/funclength_summary.md >> $GITHUB_STEP_SUMMARY
+          [ "$(cat /tmp/funclength_status)" = "ok" ] || exit 1
+
+      # ── Final summary gate ───────────────────────────────────────────────────
+      - name: "📋 Quality Gate — Final Summary"
+        if: always()
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "## 📋 Quality Gate — Final Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+
+          report() {
+            [ "$2" = "success" ] \
+              && echo "| $1 | ✅ Passed |" >> $GITHUB_STEP_SUMMARY \
+              || echo "| $1 | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+          }
+          report "✏️  Black formatting"      "${{ steps.black.outcome }}"
+          report "📦 isort import sorting"   "${{ steps.isort.outcome }}"
+          report "🔎 Ruff linting"           "${{ steps.ruff.outcome }}"
+          report "🔬 MyPy type checking"     "${{ steps.mypy.outcome }}"
+          report "🔀 Cyclomatic complexity"  "${{ steps.radon.outcome }}"
+          report "📏 Function length"        "${{ steps.funclength.outcome }}"
+
+          FAILED=0
+          for o in "${{ steps.black.outcome }}" "${{ steps.isort.outcome }}" \
+                   "${{ steps.ruff.outcome }}"  "${{ steps.mypy.outcome }}" \
+                   "${{ steps.radon.outcome }}" "${{ steps.funclength.outcome }}"; do
+            [ "$o" != "success" ] && FAILED=$((FAILED+1))
+          done
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "$FAILED" -eq "0" ]; then
+            echo "### 🎉 All quality checks passed!" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ❌ $FAILED check(s) failed. Fix the issues above, then push again." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "> 💡 **Tip:** Run \`make check\` locally to see every failure before pushing." >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # JOB 2: Tests + Coverage
+  # ─────────────────────────────────────────────────────────────────────────────
+  tests:
+    name: 🧪 Tests + Coverage
+    runs-on: ubuntu-latest
+    needs: code-quality
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run pytest with coverage
+        id: pytest
+        continue-on-error: true
+        run: |
+          pytest $TESTS_DIR/ \
+            --cov=$SOURCE_DIR \
+            --cov-report=term-missing \
+            --cov-report=json:coverage.json \
+            --cov-report=xml:coverage.xml \
+            --cov-fail-under=$MIN_COVERAGE \
+            --tb=short -v \
+            --junit-xml=test-results.xml \
+            2>&1 | tee /tmp/pytest_output.txt || true
+
+      - name: Parse and report test results
+        if: always()
+        run: |
+          echo "## 🧪 Test Results" >> $GITHUB_STEP_SUMMARY
+          python3 - <<'PYEOF'
+          import re
+          content = open("/tmp/pytest_output.txt").read()
+          summary_match = re.search(r"=+ (.*?) in [\d.]+s =+$", content, re.MULTILINE)
+          with open("/tmp/test_summary.md","w") as fh:
+              if summary_match:
+                  fh.write(f"\n**Result:** `{summary_match.group(1)}`\n\n")
+              failures = re.findall(r"FAILED .+", content)
+              if failures:
+                  fh.write("<details>\n<summary>❌ Failures (click to expand)</summary>\n\n```\n")
+                  fail_section = re.search(r"={5,} FAILURES ={5,}(.*?)={5,}", content, re.DOTALL)
+                  if fail_section:
+                      fh.write(fail_section.group(1)[:4000])
+                  fh.write("\n```\n</details>\n")
+              else:
+                  fh.write("✅ All tests passed.\n")
+          PYEOF
+          cat /tmp/test_summary.md >> $GITHUB_STEP_SUMMARY
+
+      - name: Parse coverage report
+        if: always()
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 📊 Coverage Report (threshold: $MIN_COVERAGE%)" >> $GITHUB_STEP_SUMMARY
+          MIN_C=$MIN_COVERAGE python3 - <<'PYEOF'
+          import json, os
+          min_cov = int(os.environ.get("MIN_C", 80))
+          try:
+              data = json.load(open("coverage.json"))
+          except FileNotFoundError:
+              print("Coverage report not generated.")
+              exit()
+          totals = data.get("totals", {})
+          total_pct = round(totals.get("percent_covered", 0), 1)
+          files = data.get("files", {})
+          with open("/tmp/coverage_summary.md","w") as fh:
+              badge = "✅" if total_pct >= min_cov else "❌ Below threshold"
+              fh.write(f"\n**Overall coverage: {total_pct}%** {badge}\n\n")
+              fh.write("| | File | Coverage | Missing Lines |\n")
+              fh.write("|--|------|----------|---------------|\n")
+              for filepath, info in files.items():
+                  pct = round(info["summary"].get("percent_covered", 0), 1)
+                  missing = info.get("missing_lines", [])
+                  ms = ", ".join(str(l) for l in missing[:10])
+                  if len(missing) > 10:
+                      ms += f" (+{len(missing)-10} more)"
+                  flag = "⚠️" if pct < min_cov else "✅"
+                  fp = filepath.replace("src/","")
+                  fh.write(f"| {flag} | `{fp}` | {pct}% | {ms or '—'} |\n")
+          PYEOF
+          cat /tmp/coverage_summary.md >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+
+      - name: Coverage gate
+        run: |
+          MIN_C=$MIN_COVERAGE python3 - <<'PYEOF'
+          import json, os, sys
+          min_cov = int(os.environ.get("MIN_C", 80))
+          try:
+              data = json.load(open("coverage.json"))
+          except FileNotFoundError:
+              print("No coverage.json — tests failed to run.")
+              sys.exit(1)
+          pct = round(data["totals"]["percent_covered"], 1)
+          if pct < min_cov:
+              print(f"❌ Coverage {pct}% is below the {min_cov}% threshold.")
+              sys.exit(1)
+          print(f"✅ Coverage {pct}% meets the {min_cov}% threshold.")
+          PYEOF
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # JOB 3: Security Scan (runs parallel with tests, both need code-quality)
+  # ─────────────────────────────────────────────────────────────────────────────
+  security:
+    name: 🛡️ Security Scan
+    runs-on: ubuntu-latest
+    needs: code-quality
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      # ── 1. detect-secrets ───────────────────────────────────────────────────
+      - name: "Scan 1/3 — detect-secrets (hardcoded credentials)"
+        id: secrets
+        continue-on-error: true
+        run: |
+          echo "## 🔑 Secret Detection" >> $GITHUB_STEP_SUMMARY
+          detect-secrets scan $SOURCE_DIR/ --all-files > /tmp/secrets_output.json 2>/dev/null \
+            || echo '{"results":{}}' > /tmp/secrets_output.json
+          python3 - <<'PYEOF'
+          import json
+          data = json.load(open("/tmp/secrets_output.json"))
+          findings = [
+              {"file": fp, "line": item.get("line_number","?"), "type": item.get("type","?")}
+              for fp, items in data.get("results",{}).items()
+              for item in items
+          ]
+          with open("/tmp/secrets_summary.md","w") as fh:
+              if not findings:
+                  fh.write("✅ No hardcoded secrets detected.\n")
+                  open("/tmp/secrets_status","w").write("ok")
+              else:
+                  open("/tmp/secrets_status","w").write("fail")
+                  fh.write(f"❌ **{len(findings)} potential secret(s) found.**\n\n")
+                  fh.write("> Never commit passwords, API keys, or tokens.\n")
+                  fh.write("> **How to fix:** Move to environment variables. Use `python-dotenv` or your cloud's secret manager.\n\n")
+                  fh.write("| File | Line | Secret Type |\n|------|------|-------------|\n")
+                  for item in findings:
+                      fh.write(f"| `{item['file']}` | {item['line']} | {item['type']} |\n")
+          PYEOF
+          cat /tmp/secrets_summary.md >> $GITHUB_STEP_SUMMARY
+          [ "$(cat /tmp/secrets_status)" = "ok" ] || exit 1
+
+      # ── 2. Bandit ────────────────────────────────────────────────────────────
+      - name: "Scan 2/3 — Bandit (code security)"
+        id: bandit
+        continue-on-error: true
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 🔐 Bandit Code Security Scan" >> $GITHUB_STEP_SUMMARY
+          bandit -r $SOURCE_DIR/ -f json -o /tmp/bandit_output.json 2>/dev/null || true
+          python3 - <<'PYEOF'
+          import json
+          try:
+              data = json.load(open("/tmp/bandit_output.json"))
+          except Exception:
+              data = {"results": []}
+          results = data.get("results", [])
+          high_med = [r for r in results if r.get("issue_severity") in ("HIGH","MEDIUM")]
+          icons = {"HIGH":"🔴","MEDIUM":"🟡","LOW":"🟢"}
+          with open("/tmp/bandit_summary.md","w") as fh:
+              if not high_med:
+                  fh.write("✅ No high/medium severity security issues found.\n")
+                  open("/tmp/bandit_status","w").write("ok")
+                  if results:
+                      fh.write("\n_Low-severity findings (informational):_\n\n")
+                      fh.write("| Severity | File | Line | Issue |\n|----------|------|------|-------|\n")
+                      for r in results:
+                          fp = r.get("filename","?").replace("src/","")
+                          fh.write(f"| {icons.get(r.get('issue_severity','LOW'),'🟢')} {r.get('issue_severity')} | `{fp}` | {r.get('line_number','?')} | {r.get('issue_text','?')} |\n")
+              else:
+                  open("/tmp/bandit_status","w").write("fail")
+                  fh.write(f"❌ **{len(high_med)} high/medium severity issue(s) found.**\n\n")
+                  fh.write("| Severity | File | Line | Issue |\n|----------|------|------|-------|\n")
+                  for r in sorted(results, key=lambda x: {"HIGH":0,"MEDIUM":1,"LOW":2}.get(x.get("issue_severity"),3)):
+                      fp = r.get("filename","?").replace("src/","")
+                      fh.write(f"| {icons.get(r.get('issue_severity','LOW'),'🟢')} {r.get('issue_severity')} | `{fp}` | {r.get('line_number','?')} | {r.get('issue_text','?')} |\n")
+          PYEOF
+          cat /tmp/bandit_summary.md >> $GITHUB_STEP_SUMMARY
+          [ "$(cat /tmp/bandit_status)" = "ok" ] || exit 1
+
+      # ── 3. pip-audit ─────────────────────────────────────────────────────────
+      - name: "Scan 3/3 — pip-audit (dependency vulnerabilities)"
+        id: pipaudit
+        continue-on-error: true
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 📦 Dependency Vulnerability Scan (pip-audit)" >> $GITHUB_STEP_SUMMARY
+          pip-audit -r requirements.txt --format=json -o /tmp/pipaudit_output.json 2>/dev/null || true
+          python3 - <<'PYEOF'
+          import json
+          try:
+              data = json.load(open("/tmp/pipaudit_output.json"))
+          except Exception:
+              data = {"dependencies": []}
+          vulns = [
+              {"package": dep.get("name","?"), "version": dep.get("version","?"),
+               "id": v.get("id","?"), "fix": ", ".join(v.get("fix_versions",[])) or "No fix available",
+               "desc": v.get("description","")[:80]}
+              for dep in data.get("dependencies",[])
+              for v in dep.get("vulns",[])
+          ]
+          with open("/tmp/pipaudit_summary.md","w") as fh:
+              if not vulns:
+                  fh.write("✅ No known vulnerabilities in dependencies.\n")
+                  open("/tmp/pipaudit_status","w").write("ok")
+              else:
+                  open("/tmp/pipaudit_status","w").write("fail")
+                  fh.write(f"❌ **{len(vulns)} vulnerable package(s) found.**\n\n")
+                  fh.write("| Package | Version | CVE/ID | Fix Version | Description |\n")
+                  fh.write("|---------|---------|--------|-------------|-------------|\n")
+                  for v in vulns:
+                      fh.write(f"| `{v['package']}` | {v['version']} | `{v['id']}` | {v['fix']} | {v['desc']} |\n")
+          PYEOF
+          cat /tmp/pipaudit_summary.md >> $GITHUB_STEP_SUMMARY
+          [ "$(cat /tmp/pipaudit_status)" = "ok" ] || exit 1
+
+      # ── Security gate summary ─────────────────────────────────────────────────
+      - name: "🛡️ Security Gate — Final Summary"
+        if: always()
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "## 🛡️ Security Gate — Final Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Scan | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          report() {
+            [ "$2" = "success" ] \
+              && echo "| $1 | ✅ Passed |" >> $GITHUB_STEP_SUMMARY \
+              || echo "| $1 | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+          }
+          report "🔑 Hardcoded secrets"          "${{ steps.secrets.outcome }}"
+          report "🔐 Bandit code security"       "${{ steps.bandit.outcome }}"
+          report "📦 Dependency vulnerabilities" "${{ steps.pipaudit.outcome }}"
+          FAILED=0
+          for o in "${{ steps.secrets.outcome }}" "${{ steps.bandit.outcome }}" "${{ steps.pipaudit.outcome }}"; do
+            [ "$o" != "success" ] && FAILED=$((FAILED+1))
+          done
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "$FAILED" -eq "0" ]; then
+            echo "### 🎉 All security scans passed!" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ❌ $FAILED scan(s) failed. Resolve these before merging." >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
