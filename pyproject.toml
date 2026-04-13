@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fortress"
-version = "0.1.0"
+version = "1.0.0"
 description = "Your project — built on the Fortress quality template"
 requires-python = ">=3.12"
 dependencies = []
